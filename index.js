@@ -5,8 +5,19 @@ const EventEmitter = require('events');
 class MyEmitter extends EventEmitter { }
 const emiter = new MyEmitter();
 
-const source = 'assets/c.txt'
-const target = 'assets/d.txt'
+const source = 'assets/a.txt'
+const target = 'assets/b.txt'
+
+function DJBHash(str) {
+  var hash = 5381;
+  var len = str.length, i = 0
+
+  while (len--) {
+    hash = (hash << 5) + hash + str.charCodeAt(i++); /* times 33 */
+  }
+  hash &= ~(1 << 31); /* strip the highest bit */
+  return hash;
+}
 
 class Reader {
   constructor(filepath, options) {
@@ -34,8 +45,8 @@ class Reader {
     this.stream.on('end', () => {
       this.isEnd = true
 
-
-      if (this.buf.length > 0) {
+      // debugger
+      if (this.buf.length >= 0) {
         [this.buf, this.lineChunks] = this.createLine(Buffer.concat([this.buf]), this.lineChunks)
         emiter.emit('next')
         emiter.emit('pause')
@@ -64,8 +75,6 @@ class Reader {
 
   pause() {
     return new Promise(resolve => {
-
-      var self = this
       // debugger
 
       if (this.isEnd && this.lineChunks.length === 0) {
@@ -76,20 +85,17 @@ class Reader {
         resolve([false])
       }
 
-      var fn = function () {
-        emiter.once('pause', () => {
-          // debugger
-          self.isPause = true
-          if (self.lineChunks.length === 0) {
-            self.stream.resume()
-            fn()
-          } else {
-            resolve(self.lineChunks)
-          }
-        })
-      }
-
-      fn()
+      emiter.once('pause', () => {
+        // debugger
+        this.isPause = true
+        if (this.lineChunks.length === 0) {
+          this.stream.resume()
+          this.isPause = false
+          resolve(this.pause())
+        } else {
+          resolve(this.lineChunks)
+        }
+      })
 
     })
   }
@@ -97,15 +103,18 @@ class Reader {
   next() {
     return new Promise(resolve => {
 
+      var self = this
+
       if (this.isEnd && this.lineChunks.length === 0) {
         // debugger
         resolve([false])
       }
 
-      emiter.on('next', () => {
+      emiter.once('next', () => {
         // debugger
-        resolve(this.lineChunks)
+        resolve(self.lineChunks)
       })
+
     })
   }
 
@@ -115,7 +124,9 @@ class Reader {
       return this.lines.shift()
     } else {
       this.stream.resume()
+
       this.lines = await this.next()
+      // debugger
       return this.go()
     }
   }
@@ -144,37 +155,124 @@ class Reader {
 
 }
 
-var a = new Reader(source, { highWaterMark: 1024 });
+function objToStrMap(obj) {
+  let strMap = new Map();
+  for (let k of Object.keys(obj)) {
+    strMap.set(k, obj[k]);
+  }
+  return strMap;
+}
+
+function strMapToObj(strMap) {
+  let obj = Object.create(null);
+  for (let [k, v] of strMap) {
+    obj[k] = v;
+  }
+  return obj;
+}
+
+function output(hashmap, mapNum) {
+
+  /** 创建写入流 */
+  const ws = fs.createWriteStream(`hashmaps/map${mapNum}.txt`)
+
+  /** 先转对象,再转 json */
+  ws.write(JSON.stringify(strMapToObj(hashmap)))
+
+}
+
+function readHashMap(map) {
+  return new Promise(resolve => {
+    fs.readFile(`hashmaps/${map}`, (err, data) => {
+      /** 先转 json ,再转 hashmap */
+      resolve(objToStrMap(JSON.parse(decoder.write(data))))
+    })
+  })
+
+};
+
+function lsDir(dirname) {
+  return new Promise(resolve => {
+    fs.readdir(dirname, (err, files) => {
+      resolve(files)
+    })
+  })
+}
+
+function printLog(content) {
+  var ws = fs.createWriteStream(`temp/output.txt`)
+  ws.write(content)
+}
 
 
 (async () => {
 
-  let res
-  let hash
-  let i = 0
+  /** 写文件,hash 切分 */
+  let mapNum = 1
+  let j = 0
+  let fileB = new Reader(target, { highWaterMark: 1024 * 1024 * 10 });
+  while (hashes = await fileB.poll()) {
+    /** 初始化 hashmap */
+    let hashmap = new Map()
 
+    for (let raw of hashes) {
+      /** 转字符串 */
+      let str = decoder.write(raw)
 
-  while (res = await a.go()) {
+      /** 哈希函数生成 hash */
+      let hash = DJBHash(str)
 
-    let b = new Reader(target, { highWaterMark: 1024 });
-    let j = 0
-    while (hashes = await b.poll()) {
-      debugger
-      let hashmap = new Map()
-      for (let hash of hashes) {
-        hashmap.set(decoder.write(hash), j++)
-      }
-      console.log(hashmap)
-      b.resume()
+      /** 值为数组 */
+      let arr = hashmap.get(hash) || []
+
+      /** 生成 map */
+      hashmap.set(hash, [...arr, j++])
     }
-    // debugger
 
+    /** 写文件到本地硬盘 */
+    await output(hashmap, mapNum++)
 
-    console.log(decoder.write(res), i++)
-
+    /** 读取下一份 hashmap */
+    fileB.resume()
   }
 
-  console.log('run false')
+
+  /** 读文件 */
+  let i = 0
+  let log = ``
+  var fileA = new Reader(source, { highWaterMark: 1024 * 1024 });
+  while (line = await fileA.go()) {
+    i++
+
+    /** buf 转字符串 */
+    let str = decoder.write(line)
+
+    /** 字符串转 hash */
+    let hash = DJBHash(str)
+
+    /** 相同行数组 */
+    let arr = []
+
+    /** ls hashmaps */
+    let maps = await lsDir('hashmaps')
+
+    for (let map of maps) {
+      let hashmap = await readHashMap(map)
+
+      if (hashmap.get(hash.toString())) {
+        arr = [...arr, ...hashmap.get(hash.toString())]
+      }
+    }
+
+    /** 如果有相同行 */
+    if (arr.length > 0) {
+      if (str === '') return
+      content = `${str}\na.txt:${i}\nb.txt:${arr}\n\r`
+      console.log(content)
+      log += content
+      printLog(log)
+    }
+  }
 
 })();
 
