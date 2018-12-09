@@ -5,8 +5,8 @@ const EventEmitter = require('events');
 class MyEmitter extends EventEmitter { }
 const emiter = new MyEmitter();
 
-const source = 'assets/a.txt'
-const target = 'assets/b.txt'
+const source = 'assets/c.txt'
+const target = 'assets/d.txt'
 
 class Reader {
   constructor(filepath, options) {
@@ -125,7 +125,9 @@ class Reader {
     // debugger
     if (this.lines.length > 0) {
       // debugger
-      return this.lines.shift()
+      if (this.lines[0] === false) return false
+
+      return this.lines.splice(0)
     } else {
       // debugger
       this.lines = await this.pause()
@@ -156,10 +158,12 @@ var a = new Reader(source, { highWaterMark: 1024 });
 
     let b = new Reader(target, { highWaterMark: 1024 });
     let j = 0
-    while (hash = await b.poll()) {
-      // debugger
+    while (hashes = await b.poll()) {
+      debugger
       let hashmap = new Map()
-      hashmap.set(decoder.write(hash), j++)
+      for (let hash of hashes) {
+        hashmap.set(decoder.write(hash), j++)
+      }
       console.log(hashmap)
       b.resume()
     }
