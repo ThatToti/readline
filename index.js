@@ -10,7 +10,7 @@ const source = 'assets/c.txt'
 class Reader {
   constructor() {
 
-    this.stream = fs.createReadStream(source, { highWaterMark: 1024 })
+    this.stream = fs.createReadStream(source, { highWaterMark: 10 })
 
     this.lineChunks = []
     this.lines = []
@@ -28,16 +28,9 @@ class Reader {
     this.stream.on('end', () => {
       this.isEnd = true
 
-      debugger
-
       if (this.buf.length > 0) {
         [this.buf, this.lineChunks] = this.createLine(Buffer.concat([this.buf]), this.lineChunks)
         emiter.emit('next')
-        debugger
-      }
-
-      for (let line of this.lineChunks) {
-        console.log(decoder.write(line))
       }
     })
   }
@@ -65,30 +58,19 @@ class Reader {
   next() {
     return new Promise(resolve => {
       emiter.on('next', () => {
-
-        debugger
-
-        if (this.isEnd && this.lineChunks.length === 0) {
-          resolve(null)
-        }
-
         resolve(this.lineChunks)
       })
     })
   }
 
   async go() {
-
-    debugger
-
     if (this.lines.length > 0) {
       return this.lines.shift()
     } else {
       this.stream.resume()
       this.lines = await this.next()
-      this.go()
+      return this.go()
     }
-
   }
 
 }
@@ -99,10 +81,10 @@ var a = new Reader();
 
   let res
   let count = 0
-  while ((res = await a.go()) !== undefined) {
-    debugger
+  while (res = await a.go()) {
+
     count++
-    console.log(decoder.write(res), count++)
+    console.log(decoder.write(res), count)
 
   }
 
