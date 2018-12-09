@@ -17,6 +17,9 @@ const emiter = new MyEmitter();
 const source = 'assets/a.txt'
 const target = 'assets/b.txt'
 
+/** 每隔一秒查一次内存情况 */
+const intervalTimer = setInterval(printMemoryUsage, 1000);
+
 /**
  * Reader 模块,读取流文件,提供一系列方法
  * @param {filepath} 路径
@@ -41,9 +44,14 @@ class Reader {
     this.isEnd = false
     /** 是否暂停 */
     this.isPause = false
+    /** 统计长度 */
+    this._readBytesSecond = 0
+    /** 初始时间 */
+    this.time = new Date();
 
     /** 监听读流 */
     this.stream.on('data', chunk => {
+      this._readBytesSecond += chunk.length;
       /** 按行读取 */
       [this.buf, this.lineChunks] = this.createLine(Buffer.concat([this.buf, chunk]), this.lineChunks)
       /** 暂停 */
@@ -64,6 +72,20 @@ class Reader {
         emiter.emit('pause')
       }
     })
+
+    /** 关闭监听 */
+    this.stream.on('close', chunk => {
+
+      const currentTime = new Date();
+
+      console.log(
+        `Average Time: ${byteLog(
+          (this._readBytesSecond / (currentTime - this.time)) * 1000
+        )}/s`
+      );
+      console.log(`Total Time: ${currentTime - this.time} ms`);
+      console.log(`Total Size: ${byteLog(this._readBytesSecond)}`);
+    });
   }
 
   /** 按行读取函数 */
@@ -182,6 +204,31 @@ class Reader {
 
 }
 
+/** 内存监控函数 */
+function printMemoryUsage() {
+  var info = process.memoryUsage();
+  function mb(v) {
+    return (v / 1024 / 1024).toFixed(2) + 'MB';
+  }
+  console.log(
+    'rss=%s, heapTotal=%s, heapUsed=%s',
+    mb(info.rss),
+    mb(info.heapTotal),
+    mb(info.heapUsed)
+  );
+}
+
+/** 字节大小转换 */
+function byteLog(size) {
+  if (size > 2 * 1024 * 1024) {
+    return `${(size / 1024 / 1024).toFixed(4)} Mb`;
+  } else if (size > 2 * 1024) {
+    return `${(size / 1024).toFixed(4)} Kb`;
+  } else {
+    return `${size.toFixed(4)} b`;
+  }
+}
+
 /** obj 转 map */
 function objToStrMap(obj) {
   let strMap = new Map();
@@ -252,34 +299,34 @@ function DJBHash(str) {
   /** 
    * 写文件模块,hash 切分,存入硬盘
    */
-  let mapNum = 1
-  let j = 0
-  /** 10MB 的切分量 */
-  let fileB = new Reader(target, { highWaterMark: 1024 * 1024 * 10 });
-  while (hashes = await fileB.poll()) {
-    /** 初始化 hashmap */
-    let hashmap = new Map()
+  // let mapNum = 1
+  // let j = 0
+  // /** 10MB 的切分量 */
+  // let fileB = new Reader(target, { highWaterMark: 1024 * 1024 * 10 });
+  // while (hashes = await fileB.poll()) {
+  //   /** 初始化 hashmap */
+  //   let hashmap = new Map()
 
-    for (let raw of hashes) {
-      /** 转字符串 */
-      let str = decoder.write(raw)
+  //   for (let raw of hashes) {
+  //     /** 转字符串 */
+  //     let str = decoder.write(raw)
 
-      /** 哈希函数生成 hash */
-      let hash = DJBHash(str)
+  //     /** 哈希函数生成 hash */
+  //     let hash = DJBHash(str)
 
-      /** 值为数组 */
-      let arr = hashmap.get(hash) || []
+  //     /** 值为数组 */
+  //     let arr = hashmap.get(hash) || []
 
-      /** 生成 map */
-      hashmap.set(hash, [...arr, j++])
-    }
+  //     /** 生成 map */
+  //     hashmap.set(hash, [...arr, j++])
+  //   }
 
-    /** 写文件到本地硬盘 */
-    await output(hashmap, mapNum++)
+  //   /** 写文件到本地硬盘 */
+  //   await output(hashmap, mapNum++)
 
-    /** 读取下一份 hashmap */
-    fileB.resume()
-  }
+  //   /** 读取下一份 hashmap */
+  //   fileB.resume()
+  // }
 
 
   /** 
@@ -287,7 +334,7 @@ function DJBHash(str) {
    */
   let i = 0
   let log = ``
-  var fileA = new Reader(source, { highWaterMark: 1024 * 1024 });
+  var fileA = new Reader(source, { highWaterMark: 1024 * 1024 * 10 });
   while (line = await fileA.go()) {
     i++
 
@@ -320,6 +367,12 @@ function DJBHash(str) {
       printLog(log)
     }
   }
+
+  /** 查看内存 */
+  printMemoryUsage();
+
+  /** 清楚内存定时器 */
+  clearInterval(intervalTimer);
 
 })();
 
