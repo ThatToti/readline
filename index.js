@@ -328,13 +328,42 @@ function DJBHash(str) {
   //   fileB.resume()
   // }
 
+  /**
+   * version2:
+   * hashmap 直接读入内存
+   */
+  let mapNum = 1
+  let j = 0
+  /** 10MB 的切分量 */
+  let fileB = new Reader(target, { highWaterMark: 1024 * 10 });
+  /** 初始化 hashmap */
+  let hashmap = new Map()
+  while (hashes = await fileB.poll()) {
+    for (let raw of hashes) {
+      j++
+      /** 转字符串 */
+      let str = decoder.write(raw)
+
+      /** 哈希函数生成 hash */
+      let hash = DJBHash(str)
+
+      /** 值为数组 */
+      let arr = hashmap.get(hash.toString()) || []
+
+      /** 生成 map */
+      hashmap.set(hash.toString(), [...arr, j])
+    }
+    /** 读取下一份 hashmap */
+    fileB.resume()
+  }
+  console.log(hashmap)
 
   /** 
    * 读文件模块
    */
   let i = 0
   let log = ``
-  var fileA = new Reader(source, { highWaterMark: 1024 * 1024 * 10 });
+  var fileA = new Reader(source, { highWaterMark: 1024 * 10 });
   while (line = await fileA.go()) {
     i++
 
@@ -347,15 +376,23 @@ function DJBHash(str) {
     /** 相同行数组 */
     let arr = []
 
-    /** ls hashmaps */
-    let maps = await lsDir('hashmaps')
+    /** version1:与切分文件对比 */
+    // /** ls hashmaps */
+    // let maps = await lsDir('hashmaps')
 
-    for (let map of maps) {
-      let hashmap = await readHashMap(map)
+    // for (let map of maps) {
+    //   let hashmap = await readHashMap(map)
 
-      if (hashmap.get(hash.toString())) {
-        arr = [...arr, ...hashmap.get(hash.toString())]
-      }
+    //   if (hashmap.get(hash.toString())) {
+    //     arr = [...arr, ...hashmap.get(hash.toString())]
+    //   }
+    // }
+
+    /** 
+     * verison2:
+     * 与直接在内存的 hashmap 对比 */
+    if (hashmap.get(hash.toString())) {
+      arr = [...arr, ...hashmap.get(hash.toString())]
     }
 
     /** 如果有相同行 */
@@ -365,14 +402,9 @@ function DJBHash(str) {
       console.log(content)
       log += content
       printLog(log)
+      printMemoryUsage()
     }
   }
-
-  /** 查看内存 */
-  printMemoryUsage();
-
-  /** 清楚内存定时器 */
-  clearInterval(intervalTimer);
 
 })();
 
