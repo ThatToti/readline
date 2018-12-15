@@ -277,8 +277,9 @@ function lsDir(dirname) {
 
 /** 打印查找的结果 */
 function printLog(content) {
-  var ws = fs.createWriteStream(`temp/output.txt`)
-  ws.write(content)
+  fs.appendFile(`temp/output.txt`, content, (err) => {
+    console.log(err)
+  })
 }
 
 /** DJB 教授发明的 hash 函数,广泛使用 */
@@ -401,7 +402,7 @@ function DJBHash(str) {
       content = `${str}\na.txt:${i}\nb.txt:${arr}\n\r`
       console.log(content)
       log += content
-      printLog(log)
+      printLog(content)
       printMemoryUsage()
     }
   }
