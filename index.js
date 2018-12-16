@@ -9,13 +9,11 @@
 const fs = require('fs')
 const StringDecoder = require('string_decoder').StringDecoder
 var decoder = new StringDecoder('utf8')
-const EventEmitter = require('events');
-class MyEmitter extends EventEmitter { }
-const emiter = new MyEmitter();
+const { Reader } = require('./reader')
 
 /** 源文件和目标文件 */
 const source = 'assets/a.txt'
-const target = 'assets/b.txt'
+const target = 'assets/2MB.txt'
 
 /** 每隔一秒查一次内存情况 */
 const intervalTimer = setInterval(printMemoryUsage, 1000);
@@ -26,183 +24,7 @@ const intervalTimer = setInterval(printMemoryUsage, 1000);
  * @param {options} 设置
  * @method {go}
  */
-class Reader {
-  constructor(filepath, options) {
 
-    const { highWaterMark } = options
-
-    /** 创建可读流, highwatermark 设置流量线 */
-    this.stream = fs.createReadStream(filepath, { highWaterMark: highWaterMark })
-
-    /** 行队列 */
-    this.lineChunks = []
-    /** 自执行的行队列缓冲 */
-    this.lines = []
-    /** 未换行的 buf, 等待下次拼接,初始化为0 */
-    this.buf = Buffer.alloc(0)
-    /** 是否结束 */
-    this.isEnd = false
-    /** 是否暂停 */
-    this.isPause = false
-    /** 统计长度 */
-    this._readBytesSecond = 0
-    /** 初始时间 */
-    this.time = new Date();
-
-    /** 监听读流 */
-    this.stream.on('data', chunk => {
-      this._readBytesSecond += chunk.length;
-      /** 按行读取 */
-      [this.buf, this.lineChunks] = this.createLine(Buffer.concat([this.buf, chunk]), this.lineChunks)
-      /** 暂停 */
-      this.stream.pause()
-      /** 触发监听 */
-      emiter.emit('next')
-      emiter.emit('pause')
-    })
-
-    /** 监听结束 */
-    this.stream.on('end', () => {
-      this.isEnd = true
-
-      /** 最后一段未换行的处理情况 */
-      if (this.buf.length >= 0) {
-        [this.buf, this.lineChunks] = this.createLine(Buffer.concat([this.buf]), this.lineChunks)
-        emiter.emit('next')
-        emiter.emit('pause')
-      }
-    })
-
-    /** 关闭监听 */
-    this.stream.on('close', chunk => {
-
-      const currentTime = new Date();
-
-      console.log(
-        `Average Time: ${byteLog(
-          (this._readBytesSecond / (currentTime - this.time)) * 1000
-        )}/s`
-      );
-      console.log(`Total Time: ${currentTime - this.time} ms`);
-      console.log(`Total Size: ${byteLog(this._readBytesSecond)}`);
-    });
-  }
-
-  /** 按行读取函数 */
-  createLine(buf, list = []) {
-    var index = buf.indexOf('\n')
-
-    if (this.isEnd) {
-      list.push(buf)
-      return [null, list]
-    }
-
-    if (index === -1) {
-      return [buf, list]
-    }
-
-    var line = buf.slice(0, index)
-
-    list.push(line)
-
-    return this.createLine(buf.slice(index + 1), list)
-  }
-
-  /** 暂停处理函数,用于步进操作 */
-  pause() {
-    return new Promise(resolve => {
-
-      /** 结束返回 false */
-      if (this.isEnd && this.lineChunks.length === 0) {
-        resolve([false])
-      }
-
-      /** 暂停返回 false */
-      if (this.isPause && this.lineChunks.length === 0) {
-        resolve([false])
-      }
-
-      /** 监听暂停 */
-      emiter.once('pause', () => {
-        this.isPause = true
-
-        /** 存在未读取情况,重新监听 */
-        if (this.lineChunks.length === 0) {
-          this.stream.resume()
-          this.isPause = false
-          resolve(this.pause())
-        } else {
-          /** 返回行队列 */
-          resolve(this.lineChunks)
-        }
-      })
-
-    })
-  }
-
-  /** 内部函数,用于自执行 */
-  next() {
-    return new Promise(resolve => {
-
-      var self = this
-
-      /** 结束时返回 false */
-      if (this.isEnd && this.lineChunks.length === 0) {
-        resolve([false])
-      }
-
-      /** 监听自执行的 next */
-      emiter.once('next', () => {
-        resolve(self.lineChunks)
-      })
-
-    })
-  }
-
-  /** 自执行函数 go, 自动读取所有流
-   * 开发者无需关注内部的状态改变
-   * 与 next 配合使用
-   */
-  async go() {
-
-    /** 有行队列,一次 shift 一个 */
-    if (this.lines.length > 0) {
-      return this.lines.shift()
-    } else {
-      /** 无行队列,拉取数据 */
-      this.stream.resume()
-      this.lines = await this.next()
-      return this.go()
-    }
-  }
-
-  /** 
-   * 轮询:
-   * 用于 hash 切分,与 highwatermark 配合,切分 hash
-   */
-  async poll() {
-
-    /** 有队列,返回一大块内容 */
-    if (this.lines.length > 0) {
-      if (this.lines[0] === false) return false
-      return this.lines.splice(0)
-    } else {
-      /** 无队列拉取 */
-      this.lines = await this.pause()
-      return this.poll()
-    }
-  }
-
-  /**
-   * 读取指针:
-   * 用于和轮询配合,切分 hash
-   */
-  resume() {
-    this.isEnd ? this.isPause = true : this.isPause = false
-    this.stream.resume()
-  }
-
-}
 
 /** 内存监控函数 */
 function printMemoryUsage() {
@@ -216,17 +38,6 @@ function printMemoryUsage() {
     mb(info.heapTotal),
     mb(info.heapUsed)
   );
-}
-
-/** 字节大小转换 */
-function byteLog(size) {
-  if (size > 2 * 1024 * 1024) {
-    return `${(size / 1024 / 1024).toFixed(4)} Mb`;
-  } else if (size > 2 * 1024) {
-    return `${(size / 1024).toFixed(4)} Kb`;
-  } else {
-    return `${size.toFixed(4)} b`;
-  }
 }
 
 /** obj 转 map */
@@ -276,10 +87,18 @@ function lsDir(dirname) {
 }
 
 /** 打印查找的结果 */
-function printLog(content) {
-  fs.appendFile(`temp/output.txt`, content, (err) => {
-    console.log(err)
-  })
+function printLog(outMap) {
+  // fs.appendFile(`temp/output.txt`, content, (err) => {
+  //   console.log(err)
+  // })
+  let ws = fs.createWriteStream('temp/output.txt')
+
+  let content = ``
+  for (let [index, item] of Object.entries(outMap)) {
+    content += `${item.str}\na.txt:${index}\nb.txt:${item.arr}\n\r`
+  }
+  ws.write(content)
+
 }
 
 /** DJB 教授发明的 hash 函数,广泛使用 */
@@ -297,116 +116,73 @@ function DJBHash(str) {
 /** 自执行逻辑 */
 (async () => {
 
-  /** 
-   * 写文件模块,hash 切分,存入硬盘
-   */
-  // let mapNum = 1
-  // let j = 0
-  // /** 10MB 的切分量 */
-  // let fileB = new Reader(target, { highWaterMark: 1024 * 1024 * 10 });
-  // while (hashes = await fileB.poll()) {
-  //   /** 初始化 hashmap */
-  //   let hashmap = new Map()
-
-  //   for (let raw of hashes) {
-  //     /** 转字符串 */
-  //     let str = decoder.write(raw)
-
-  //     /** 哈希函数生成 hash */
-  //     let hash = DJBHash(str)
-
-  //     /** 值为数组 */
-  //     let arr = hashmap.get(hash) || []
-
-  //     /** 生成 map */
-  //     hashmap.set(hash, [...arr, j++])
-  //   }
-
-  //   /** 写文件到本地硬盘 */
-  //   await output(hashmap, mapNum++)
-
-  //   /** 读取下一份 hashmap */
-  //   fileB.resume()
-  // }
-
   /**
-   * version2:
-   * hashmap 直接读入内存
+   * hashmap 切分直接读入内存
    */
-  let mapNum = 1
-  let j = 0
-  /** 10MB 的切分量 */
-  let fileB = new Reader(target, { highWaterMark: 1024 * 10 });
-  /** 初始化 hashmap */
-  let hashmap = new Map()
+  let [strT, hashT, arrT, j, outMap] = ['', 12121, [], 0, {}]
+  /** 100MB 的切分量 */
+  let fileB = new Reader(target, { highWaterMark: 1024 * 1024 }, 100 * 1024 * 1024);
+  /** 输出的 map */
   while (hashes = await fileB.poll()) {
+
+    let hashmap = new Map()
+
     for (let raw of hashes) {
+      /** 记录行数 */
       j++
+
       /** 转字符串 */
-      let str = decoder.write(raw)
+      strT = decoder.write(raw)
 
       /** 哈希函数生成 hash */
-      let hash = DJBHash(str)
+      hashT = DJBHash(strT)
 
       /** 值为数组 */
-      let arr = hashmap.get(hash.toString()) || []
+      arrT = hashmap.get(hashT) || []
 
       /** 生成 map */
-      hashmap.set(hash.toString(), [...arr, j])
+      hashmap.set(hashT, [...arrT, j])
     }
+
+    /** 
+      * 读文件模块
+      */
+    let [strS, hashS, i] = ['', 12121, 0]
+    let fileA = new Reader(source, { highWaterMark: 1024 * 1024 });
+    while (line = await fileA.go()) {
+      i++
+
+      /** buf 转字符串 */
+      strS = decoder.write(line)
+
+      /** 字符串转 hash */
+      hashS = DJBHash(strS)
+
+      /** 相同行数组 */
+      let arr = []
+
+      /** 与直接在内存的 hashmap 对比  */
+      if (hashmap.get(hashS)) {
+        arr = [...arr, ...hashmap.get(hashS)]
+      }
+
+      /** 如果有相同行 */
+      if (arr.length > 0) {
+        if (strS === '') return
+
+        if (outMap[i] === undefined) {
+          outMap[i] = { str: strS, arr: arr }
+        } else {
+          outMap[i].arr = [...outMap[i].arr, ...arr]
+        }
+        printLog(outMap)
+        printMemoryUsage()
+      }
+    }
+
     /** 读取下一份 hashmap */
     fileB.resume()
   }
-  console.log(hashmap)
-
-  /** 
-   * 读文件模块
-   */
-  let i = 0
-  let log = ``
-  var fileA = new Reader(source, { highWaterMark: 1024 * 10 });
-  while (line = await fileA.go()) {
-    i++
-
-    /** buf 转字符串 */
-    let str = decoder.write(line)
-
-    /** 字符串转 hash */
-    let hash = DJBHash(str)
-
-    /** 相同行数组 */
-    let arr = []
-
-    /** version1:与切分文件对比 */
-    // /** ls hashmaps */
-    // let maps = await lsDir('hashmaps')
-
-    // for (let map of maps) {
-    //   let hashmap = await readHashMap(map)
-
-    //   if (hashmap.get(hash.toString())) {
-    //     arr = [...arr, ...hashmap.get(hash.toString())]
-    //   }
-    // }
-
-    /** 
-     * verison2:
-     * 与直接在内存的 hashmap 对比 */
-    if (hashmap.get(hash.toString())) {
-      arr = [...arr, ...hashmap.get(hash.toString())]
-    }
-
-    /** 如果有相同行 */
-    if (arr.length > 0) {
-      if (str === '') return
-      content = `${str}\na.txt:${i}\nb.txt:${arr}\n\r`
-      console.log(content)
-      log += content
-      printLog(content)
-      printMemoryUsage()
-    }
-  }
-
 })();
 
 
