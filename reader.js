@@ -8,8 +8,25 @@ const EventEmitter = require('events');
 class MyEmitter extends EventEmitter { }
 const emiter = new MyEmitter();
 
+/**
+ * Reader 模块,读取流文件,提供一系列方法
+ * @param {filepath} 路径
+ * @param {options} 设置
+ * @method {go}
+ */
+
+/** 字节大小转换 */
+function byteLog(size) {
+    if (size > 2 * 1024 * 1024) {
+        return `${(size / 1024 / 1024).toFixed(4)} Mb`;
+    } else if (size > 2 * 1024) {
+        return `${(size / 1024).toFixed(4)} Kb`;
+    } else {
+        return `${size.toFixed(4)} b`;
+    }
+}
 class Reader {
-    constructor(filepath, options, hashsize = 10 * 1024 * 1024) {
+    constructor(filepath, options, hashsize = 1024 * 1024) {
 
         const { highWaterMark } = options
 
@@ -30,13 +47,16 @@ class Reader {
         this._readBytesSecond = 0
         /** 初始时间 */
         this.time = new Date();
-        /** 轮询的 hash 表长度 */
-        this.pollChunk = 0;
+        /** hash 切分大小 */
+        this.hashsize = hashsize
+        /** 记录 poll 的切分度 */
+        this.pollChunk = 0
 
         /** 监听读流 */
         this.stream.on('data', chunk => {
             this._readBytesSecond += chunk.length;
             this.pollChunk += chunk.length;
+
             /** 按行读取 */
             [this.buf, this.lineChunks] = this.createLine(Buffer.concat([this.buf, chunk]), this.lineChunks)
             /** 暂停 */
@@ -60,7 +80,18 @@ class Reader {
 
         /** 关闭监听 */
         this.stream.on('close', chunk => {
+
             const currentTime = new Date();
+
+            console.log(`\n\r${filepath === 'assets/a.txt' ? '--查找的性能分析--' : '--生成 hash 表的分析--'}`)
+            console.log(
+                `Average Time: ${byteLog(
+                    (this._readBytesSecond / (currentTime - this.time)) * 1000
+                )}/s`
+            );
+            console.log(`Total Time: ${currentTime - this.time} ms`);
+            console.log(`Total Size: ${byteLog(this._readBytesSecond)}`);
+            console.log(`------\n\r`)
         });
     }
 
@@ -88,8 +119,10 @@ class Reader {
     pause() {
         return new Promise(resolve => {
 
-            /** 结束返回 false */
-            if (this.isEnd && this.lineChunks.length === 0) {
+            /** 结束时,有余量返回余量,没余量返回 false */
+            if (this.isEnd && this.stream.lineChunks !== undefined) {
+                resolve(this.lineChunks)
+            } else if (this.isEnd) {
                 resolve([false])
             }
 
@@ -159,15 +192,20 @@ class Reader {
     async poll() {
 
         /** 有队列,返回一大块内容 */
-        if (this.pollChunk >= hashsize) {
+        if (this.pollChunk >= this.hashsize) {
             this.pollChunk = 0
-            if (this.lines[0] === false) return false
             return this.lines.splice(0)
         } else {
-            /** 无队列拉取 */
-            this.stream.resume()
-            this.lines = await this.pause()
-            return this.poll()
+            if (this.isEnd && this.lines.length !== 0) {
+                if (this.lines[0] === false) return false
+                return this.lines.splice(0)
+            } else {
+                /** 无队列拉取 */
+                this.stream.resume()
+                this.lines = await this.pause()
+                return this.poll()
+            }
+
         }
     }
 
